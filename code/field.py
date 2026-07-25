@@ -11,42 +11,76 @@ def euler_method(px, py, u, v, dt):
     py_updated = py + dt*v
     return px_updated, py_updated
 
-# Initial conditions
-x0, y0 = 2, 1
+class SwimmerEnv: 
+    def __init__(self):
+        self.v_swim = 0.3
+        self.dt = 0.1
+        self.target_x = 5
+        self.target_y = 6
+        self.threshold = 0.2
+        self.max_steps = 1000
+        self.domain_min = 0
+        self.domain_max = 2*np.pi
 
-dt = 0.01
-N = 2000
+    def _get_obs(self):
+        self.obs = np.array([self.target_x - self.px, self.target_y - self.py])
+        return self.obs
 
-list_pos = []
+    def reset(self):
+        self.px = 2
+        self.py = 1
+        self.step_count = 0
+        return self._get_obs()
 
-# Taylor-Green Field 
-X = np.linspace(0, 2*np.pi, 50)
-Y = np.linspace(0, 2*np.pi, 50)
-x, y = np.meshgrid(X, Y, indexing='xy')
-U, V = taylor_green_field(x, y)
+    def step(self, action):
+        self.u, self.v = taylor_green_field(self.px, self.py)
+        self.u = self.u + self.v_swim*np.cos(action)
+        self.v = self.v + self.v_swim*np.sin(action)
+
+        self.px, self.py = euler_method(self.px, self.py, self.u, self.v, self.dt)
+        self.px = np.clip(self.px, 0, 2*np.pi)
+        self.py = np.clip(self.py, 0, 2*np.pi)
+
+        self.step_count +=1
+        self.distance_target = np.sqrt((self.px - self.target_x)**2 
+                                       + (self.py - self.target_y)**2)
+        
+        self.terminated = self.distance_target <= self.threshold
+        self.truncated = self.step_count >= self.max_steps 
+        self.info={}
+        self.reward= -self.dt
+
+        if self.terminated: 
+            self.reward +=100
+
+        return self._get_obs(), self.reward, self.terminated, self.truncated, self.info 
 
 if __name__ == "__main__":
     print("Starting the script..")
+    terminated = False
+    truncated = False
+    env = SwimmerEnv()
+    obs= env.reset()
 
-    #Initial pos of the swimmer
-    px, py = x0, y0
+    list_pos = []
 
-    # Adding the swimming parameters
-    theta = np.pi/2
-    v_swim = 0.3
+    X = np.linspace(env.domain_min, env.domain_max, 50)
+    Y = np.linspace(env.domain_min, env.domain_max, 50)
+    x, y = np.meshgrid(X, Y, indexing='xy')
+    U, V = taylor_green_field(x, y)
 
-    # Compute the position of the swimmer
-    for i in range (0, N):
-        u, v = taylor_green_field(px, py)
+    while not (terminated or truncated):
+        theta = np.arctan2(obs[1], obs[0])
+        obs, reward, terminated, truncated, info = env.step(theta)
+        list_pos.append((env.px, env.py))
+         
+    print("step_count:", env.step_count)
 
-        # Swimming stuff 
-        u = u + v_swim*np.cos(theta)
-        v = v + v_swim*np.sin(theta)
+    if terminated == True: 
+        print("Target reached!")
 
-        px, py = euler_method(px, py, u, v, dt)
-        px = np.clip(px, 0, 2*np.pi)
-        py = np.clip(py, 0, 2*np.pi)
-        list_pos.append((px, py))
+    if truncated == True: 
+        print("Out of step_counts...")
 
     #Plot TG field + trajectory of the swimmer
     traj = np.array(list_pos)
