@@ -6,14 +6,43 @@ def taylor_green_field(x,y):
     v = -np.cos(x)*np.sin(y)
     return u, v
 
+def euler_method(px, py, u, v, dt):
+    px_updated = px + dt*u 
+    py_updated = py + dt*v
+    return px_updated, py_updated
+
+# Initial conditions
+x0, y0 = 2, 1
+
+dt = 0.01
+N = 2000
+
+list_pos = []
+
+# Taylor-Green Field 
 X = np.linspace(0, 2*np.pi, 50)
 Y = np.linspace(0, 2*np.pi, 50)
 x, y = np.meshgrid(X, Y, indexing='xy')
-
 U, V = taylor_green_field(x, y)
 
-fig, ax = plt.subplots()
-q = ax.quiver(X, Y, U, V)
-ax.quiverkey(q,X=1, Y=1, U=10, label ='Quiver, length =10', labelpos='E')
 
-plt.show()
+if __name__ == "__main__":
+    print("Starting the script..")
+
+    #Initial pos of the swimmer
+    px, py = x0, y0
+
+    # Compute the position of the swimmer
+    for i in range (0, N):
+        u, v = taylor_green_field(px, py)
+
+        px, py = euler_method(px, py, u, v, dt)
+        list_pos.append((px, py))
+
+    #Plot TG field + trajectory of the swimmer
+    traj = np.array(list_pos)
+    fig, ax = plt.subplots()
+    q = ax.quiver(X, Y, U, V)
+    ax.quiverkey(q,X=1, Y=1, U=10, label ='Quiver, length =10', labelpos='E')
+    plt.plot(traj[:,0], traj[:,1], 'r--')
+    plt.show()
