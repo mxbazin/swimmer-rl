@@ -14,7 +14,7 @@ def euler_method(px, py, u, v, dt):
 
 class SwimmerEnv: 
     def __init__(self):
-        self.v_swim = 0.3
+        self.v_swim = 0.75
         self.dt = 0.1
         self.target_x = 5
         self.target_y = 6
