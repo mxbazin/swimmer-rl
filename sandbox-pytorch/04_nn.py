@@ -1,0 +1,58 @@
+## The goal here is to approximate the sin function by a polynomial function
+## Variation from the pytorch program, but with a NN module 
+
+import torch
+dtype = torch.float 
+device = torch.device('cpu')
+
+#Random input/outputs data 
+N = 2000
+x = torch.linspace(-torch.pi, torch.pi, N, device=device, dtype=dtype)
+y = torch.sin(x)
+
+#We write the coeffcients of the polynomial in a NN layer
+p = torch.tensor([1, 2, 3])
+
+#And vectorize our array using unsqueeze
+#x.unsqueeze(-1) = (2000,1)
+#p seen as (1,3)
+#Broadcasting to get (2000,3), so for each xi, we compute [xi, xi**2, xi**3]  
+xx = x.unsqueeze(-1).pow(p)
+
+#We define our model as a sequence of layers
+#Linear layer to compute ouputs using a linear functon 
+#Flatten layer to flaten the output of the linear layer to a 1D tensor
+model = torch.nn.Sequential(
+    torch.nn.Linear(3,1),
+    torch.nn.Flatten(0,1)
+)
+
+#We define the  loss function using the MSE
+loss_fn = torch.nn.MSELoss(reduction='sum')
+
+learning_rate = 1e-6
+for t in range (N):
+    #Forward pass: called like a function, tensor input -> tensor output
+    y_pred = model(xx)
+
+    #Compute and print loss
+    loss = loss_fn(y_pred, y)
+    if t % 100 == 99:
+        print(t, loss.item())
+
+    #Zero the gradients before running the backward pass
+    model.zero_grad()
+
+    #Backward pass: compute gradient of the loss with respect to the parameters
+    #Same as autograd
+    loss.backward()
+
+    #Update weights with autograd using gradient descnt
+    with torch.no_grad():
+        for param in model.parameters():
+            param -= learning_rate*param.grad
+
+linear_layer=model[0]
+
+#For a linear model, parameters as stored as weight and bias
+print(f"Result: y = {linear_layer.bias.item()} + {linear_layer.weight[:, 0].item()} x + {linear_layer.weight[:, 1].item()} x^2 + {linear_layer.weight[:, 2].item()} x^3")
