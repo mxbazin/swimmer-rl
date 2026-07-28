@@ -26,7 +26,7 @@ class SwimmerEnv:
         self.target_x = 5
         self.target_y = 6
         self.threshold = 0.2
-        self.max_steps = 2000
+        self.max_steps = 1000
         self.domain_min = 0
         self.domain_max = 2*np.pi
         self.delta_max = 0.5 

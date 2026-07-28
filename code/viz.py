@@ -1,5 +1,28 @@
  # plot_traj(), make_gif() — importés par les autres
 
+import matplotlib.pyplot as plt 
+import statistics as stats 
+import random
+
+def plot_returns(returns, window, title):
+   mean_returns=[]
+   x_abscisses=[]
+   for i in range(window, len(returns)):
+      x_abscisses.append(i)
+      mean_returns.append(stats.mean(returns[i-window:i]))
+   plt.plot(returns, '.', color='red', alpha=0.3, label='Return per episode')
+   plt.plot(x_abscisses, mean_returns, '-', color='blue', label=f'Mean return ({window} episodes)')
+   plt.xlabel("Episode")
+   plt.ylabel("Return")
+   plt.title(f"REINFORCE {title}")
+   plt.legend()
+   plt.savefig(f'figs/mean_return_{title}.png')
+   plt.show()
+   plt.close()
+
+if __name__ == "__main__":
+   list_bidon =  random.choices(range(1, 101), k=500)
+   plot_returns(list_bidon, 20, "bidon")
 
     #Plot TG field + trajectory of the swimmer
     # traj = np.array(list_pos)
