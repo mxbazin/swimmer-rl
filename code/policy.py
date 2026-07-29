@@ -17,6 +17,15 @@ class PolicyRL(torch.nn.Module):
         normal = torch.distributions.Normal(mu, sigma)
         return normal 
 
+    def act(self, obs, deterministic=False):
+        obs = torch.as_tensor(obs, dtype=torch.float)
+        distrib = self(obs)
+        if deterministic:
+            action = distrib.mean
+        else:
+            action = distrib.sample()
+        return action.item()
+
 if __name__ == "__main__":
     print("Starting the script..")
     obs = torch.randn(8, 4)

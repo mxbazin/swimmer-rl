@@ -30,6 +30,7 @@ class SwimmerEnv:
         self.domain_min = 0
         self.domain_max = 2*np.pi
         self.delta_max = 0.5 
+        self.out_of_bounds = False 
 
     def _get_obs(self):
         obs = np.array([self.target_x - self.px, self.target_y - self.py, np.cos(self.theta), np.sin(self.theta)])
@@ -42,6 +43,7 @@ class SwimmerEnv:
         dx = self.target_x - self.px 
         self.theta = np.arctan2(dy, dx)
         self.step_count = 0
+        self.out_of_bounds = False 
         return self._get_obs()
 
     def step(self, action):
@@ -59,21 +61,28 @@ class SwimmerEnv:
         p = RungeKutta2_method(p, velocity, self.dt)
 
         self.px = p[0]; self.py = p[1]
+
+        if self.px < self.domain_min or self.px > self.domain_max or self.py < self.domain_min or self.py > self.domain_max:
+            self.out_of_bounds = True
+
         self.px = np.clip(self.px, 0, 2*np.pi)
         self.py = np.clip(self.py, 0, 2*np.pi)
 
         self.step_count +=1
         self.distance_target = np.sqrt((self.px - self.target_x)**2 
                                        + (self.py - self.target_y)**2)
-        
+
         self.terminated = self.distance_target <= self.threshold
-        self.truncated = self.step_count >= self.max_steps 
+        self.truncated = self.step_count >= self.max_steps or self.out_of_bounds == True
         self.info={}
+
         self.reward= -self.dt
 
+        if self.out_of_bounds == True:
+            self.reward += -self.dt*(self.max_steps - self.step_count)
         if self.terminated: 
             self.reward +=100
-
+        
         return self._get_obs(), self.reward, self.terminated, self.truncated, self.info 
 
 if __name__ == "__main__":

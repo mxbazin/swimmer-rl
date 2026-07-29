@@ -1,12 +1,16 @@
 # boucle d'entraînement (session 2)
 import torch
+import os
+
 from env import SwimmerEnv
 from policy import PolicyRL
 import statistics as stats
 import numpy as np
 from viz import plot_returns
 
-import os
+from evaluate import evaluate
+from greedy import GreedyPolicy
+
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
@@ -74,6 +78,17 @@ if __name__ == "__main__":
             print("ep:", episode, "|", "retour", mean_retour_stats, "|", "success", success_win, "/", 20, "|", "sigma", sigma)
 
     np.save('runs/returns_naif.npy', retour_stats)
+    torch.save(policy.state_dict(), 'runs/policy_naif.pt')
     plot_returns(retour_stats, 20, f"naif_vswim{env.v_swim}")
+
+    retour_stats_mean_greedy, success_win_greedy, length_stats_mean_greedy = evaluate(env, GreedyPolicy(), 20, deterministic=True)
+    print("GREEDY:", "|", "retour", retour_stats_mean_greedy, "|", "success", success_win_greedy, "/", 20, "|", "length", length_stats_mean_greedy)
+
+    retour_stats_mean_stoch, success_win_stoch, length_stats_mean_stoch = evaluate(env, policy, 20, deterministic=False)
+    print("STOCHASTIC:", "|", "retour", retour_stats_mean_stoch, "|", "success", success_win_stoch, "/", 20, "|", "length", length_stats_mean_stoch)
+
+    retour_stats_mean_deterministic, success_win_deterministic, length_stats_mean_deterministic = evaluate(env, policy, 20, deterministic=True)
+    print("DETERMINISTIC:", "|", "retour", retour_stats_mean_deterministic, "|", "success", success_win_deterministic, "/", 20, "|", "length", length_stats_mean_deterministic)
+
 
 
