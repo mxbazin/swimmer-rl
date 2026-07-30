@@ -4,6 +4,7 @@ from env import SwimmerEnv
 import statistics as stats
 from greedy import GreedyPolicy 
 from policy import PolicyRL
+import numpy as np
 import torch
 
 def evaluate(env, policy, n_episodes=20, deterministic=True):
@@ -42,6 +43,27 @@ if __name__ == "__main__":
     #policy = PolicyRL()
     #policy.load_state_dict(torch.load('runs/policy_naif.pt'))
     policy = GreedyPolicy()
-    n_episodes=30
-    retour_stats_mean, success_win, length_stats_mean = evaluate(env, policy, n_episodes, deterministic=True)
-    print("ep:", n_episodes, "|", "retour", retour_stats_mean, "|", "success", success_win, "/", n_episodes, "|")
+    obs = env.reset(2, 1)
+    terminated = False
+    truncated = False
+    list_reward_test1 = []
+    while not (terminated or truncated):
+        action = policy.act(obs, deterministic=True)                
+        obs, reward, terminated, truncated, info = env.step(action)
+        list_reward_test1.append(reward)
+    print("env.step_count:", env.step_count, "list_reward.sum", sum(list_reward_test1))
+
+    obs = env.reset(2, 1 + 2*np.pi)
+    terminated = False
+    truncated = False
+    list_reward_test2 = []
+    while not (terminated or truncated):
+        action = policy.act(obs, deterministic=True)                
+        obs, reward, terminated, truncated, info = env.step(action)
+        list_reward_test2.append(reward)
+    print("env.step_count:", env.step_count, "list_reward.sum", sum(list_reward_test2))
+
+
+    # n_episodes=30
+    # retour_stats_mean, success_win, length_stats_mean = evaluate(env, policy, n_episodes, deterministic=True)
+    # print("ep:", n_episodes, "|", "retour", retour_stats_mean, "|", "success", success_win, "/", n_episodes, "|", "length_stats_mean", length_stats_mean)

@@ -12,7 +12,7 @@ class PolicyRL(torch.nn.Module):
         self.log_std = torch.nn.Parameter(log_std)
 
     def forward(self, obs):
-        mu = self.model(obs)
+        mu = self.model(obs).squeeze(-1)
         sigma = torch.exp(self.log_std)
         normal = torch.distributions.Normal(mu, sigma)
         return normal 

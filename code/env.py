@@ -19,6 +19,10 @@ def wrap_angle(angle):
     angle = np.arctan2(np.sin(angle), np.cos(angle))
     return angle 
 
+def wrap_displacement(d): 
+    d = (np.mod(d + np.pi, 2*np.pi) - np.pi )
+    return d
+
 class SwimmerEnv: 
     def __init__(self, v_swim=0.75, dt=0.01):
         self.v_swim = v_swim 
@@ -30,24 +34,26 @@ class SwimmerEnv:
         self.domain_min = 0
         self.domain_max = 2*np.pi
         self.delta_max = 0.5 
-        self.out_of_bounds = False 
+
+    def _displacement_to_target(self):
+        dx = self.target_x - self.px
+        dy = self.target_y - self.py
+        return wrap_displacement(np.array([dx, dy]))
 
     def _get_obs(self):
-        obs = np.array([self.target_x - self.px, self.target_y - self.py, np.cos(self.theta), np.sin(self.theta)])
+        d = self._displacement_to_target()
+        obs = np.array([d[0], d[1], np.cos(self.theta), np.sin(self.theta)])
         return obs
 
-    def reset(self):
-        self.px = 2
-        self.py = 1
-        dy = self.target_y - self.py 
-        dx = self.target_x - self.px 
-        self.theta = np.arctan2(dy, dx)
+    def reset(self, px=2, py=1):
+        self.px = px
+        self.py = py
+        d = self._displacement_to_target()
+        self.theta = np.arctan2(d[1], d[0])
         self.step_count = 0
-        self.out_of_bounds = False 
         return self._get_obs()
 
     def step(self, action):
-
         action = np.clip(action, -self.delta_max, self.delta_max)
         self.theta = wrap_angle(self.theta + action)
 
@@ -61,28 +67,20 @@ class SwimmerEnv:
         p = RungeKutta2_method(p, velocity, self.dt)
 
         self.px = p[0]; self.py = p[1]
-
-        if self.px < self.domain_min or self.px > self.domain_max or self.py < self.domain_min or self.py > self.domain_max:
-            self.out_of_bounds = True
-
-        self.px = np.clip(self.px, 0, 2*np.pi)
-        self.py = np.clip(self.py, 0, 2*np.pi)
+        self.px = np.mod(self.px, 2*np.pi)
+        self.py = np.mod(self.py, 2*np.pi)
 
         self.step_count +=1
-        self.distance_target = np.sqrt((self.px - self.target_x)**2 
-                                       + (self.py - self.target_y)**2)
-
+        d = self._displacement_to_target()
+        self.distance_target = np.sqrt(d[0]**2 + d[1]**2)
         self.terminated = self.distance_target <= self.threshold
-        self.truncated = self.step_count >= self.max_steps or self.out_of_bounds == True
         self.info={}
-
         self.reward= -self.dt
 
-        if self.out_of_bounds == True:
-            self.reward += -self.dt*(self.max_steps - self.step_count)
         if self.terminated: 
             self.reward +=100
-        
+        self.truncated = self.step_count >= self.max_steps   
+
         return self._get_obs(), self.reward, self.terminated, self.truncated, self.info 
 
 if __name__ == "__main__":
