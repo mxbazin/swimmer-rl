@@ -33,7 +33,7 @@ def train(env, seed, log_std_init, squash, use_critic, lr_loss, lr_critic, mode,
 
     torch.manual_seed(seed)
 
-    policy = PolicyRL(log_std_init, squash=squash)
+    policy = PolicyRL(log_std_init, delta_max=env.delta_max, squash=squash)
     optimizer = torch.optim.Adam(policy.parameters(),lr=lr_loss)
 
     if use_critic:
@@ -146,7 +146,7 @@ def train(env, seed, log_std_init, squash, use_critic, lr_loss, lr_critic, mode,
 
 if __name__ == "__main__":
 
-    list_seed=[97, 104, 171]
+    list_seed=[97, 104, 171] 
     list_mode = ['rtg', 'discounted']
     lr_loss = 1e-3
     lr_critic = 1e-2
