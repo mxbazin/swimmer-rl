@@ -23,7 +23,7 @@ def plot_returns(returns, window, title):
    #plt.show()
    plt.close()
 
-def plot_comparison(pattern, title, window=20, list_label=None):
+def plot_comparison(pattern, title, window=20, list_label=None, greedy_ref=None):
    list_paths= sorted(glob.glob(pattern))
    if list_label is None:
          list_label=[]
@@ -40,7 +40,8 @@ def plot_comparison(pattern, title, window=20, list_label=None):
          x_abscisses.append(i)
          mean_returns.append(stats.mean(data[i-window:i]))
       plt.plot(x_abscisses, mean_returns, '-', label=label)
-   plt.axhline(97.8, linestyle='--', color='grey', label='greedy')
+   if greedy_ref is not None:
+      plt.axhline(greedy_ref, linestyle='--', color='grey', label='greedy')
    plt.xlabel("Episode")
    plt.ylabel("Return")
    plt.title(f"REINFORCE {title}")
@@ -49,7 +50,9 @@ def plot_comparison(pattern, title, window=20, list_label=None):
    plt.show()
 
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
+   list_label = ["disc_104", "disc_171", "disc_97", "rtg_104", "rtg_171", "rtg_97"]
+   plot_comparison('runs/*nupdates300*.npy', 'vswim05_6runs', window=100, list_label=list_label, greedy_ref=-98.5)
    # plot_comparison('runs/*seed97*.npy', 'rtg_seed97',window=20, list_label=None)
    # plot_comparison('runs/*seed104*.npy', 'rtg_seed104',window=20, list_label=None)
    # plot_comparison('runs/*seed171*.npy', 'rtg_seed171',window=20, list_label=None)

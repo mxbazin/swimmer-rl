@@ -24,7 +24,7 @@ def wrap_displacement(d):
     return d
 
 class SwimmerEnv: 
-    def __init__(self, v_swim=0.75, dt=0.01):
+    def __init__(self, v_swim=0.75, dt=0.01, shaping=False):
         self.v_swim = v_swim 
         self.dt = dt
         self.target_x = 5
@@ -33,7 +33,8 @@ class SwimmerEnv:
         self.max_steps = 1000
         self.domain_min = 0
         self.domain_max = 2*np.pi
-        self.delta_max = 0.5 
+        self.delta_max = 1 
+        self.shaping = shaping
 
     def _displacement_to_target(self):
         dx = self.target_x - self.px
@@ -42,13 +43,18 @@ class SwimmerEnv:
 
     def _get_obs(self):
         d = self._displacement_to_target()
-        obs = np.array([d[0], d[1], np.cos(self.theta), np.sin(self.theta)])
+        u, v= taylor_green_field(self.px,self.py)
+        obs = np.array([d[0], d[1], np.cos(self.theta), np.sin(self.theta), u, v])
         return obs
 
     def reset(self, px=2, py=1):
         self.px = px
         self.py = py
         d = self._displacement_to_target()
+
+        self.distance_target = np.sqrt(d[0]**2 + d[1]**2)
+        self.old_distance = self.distance_target
+
         self.theta = np.arctan2(d[1], d[0])
         self.step_count = 0
         return self._get_obs()
@@ -75,11 +81,17 @@ class SwimmerEnv:
         self.distance_target = np.sqrt(d[0]**2 + d[1]**2)
         self.terminated = self.distance_target <= self.threshold
         self.info={}
-        self.reward= -self.dt
+
+        if self.shaping:
+            self.reward= -self.dt + (self.old_distance - self.distance_target)
+        else: 
+            self.reward= -self.dt
 
         if self.terminated: 
             self.reward +=100
         self.truncated = self.step_count >= self.max_steps   
+
+        self.old_distance = self.distance_target
 
         return self._get_obs(), self.reward, self.terminated, self.truncated, self.info 
 
@@ -87,7 +99,7 @@ if __name__ == "__main__":
     print("Starting the script..")
     terminated = False
     truncated = False
-    env = SwimmerEnv(0.3, 0.1)
+    env = SwimmerEnv(2, 0.1, shaping=True)    
     obs= env.reset()
 
     list_pos = []
@@ -105,7 +117,7 @@ if __name__ == "__main__":
         obs, reward, terminated, truncated, info = env.step(theta)
         list_pos.append((env.px, env.py))
          
-    print("step_count:", env.step_count)
+    print("step_count:", env.step_count, "reward", reward)
 
     if terminated == True: 
         print("Target reached!")

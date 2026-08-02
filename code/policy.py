@@ -2,17 +2,21 @@
 import torch
 
 class PolicyRL(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, log_std_init, delta_max=1, squash=True):
         super().__init__()
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(4,64),
+            torch.nn.Linear(6,64),
             torch.nn.Tanh(),
             torch.nn.Linear(64,1))
-        log_std = torch.tensor((0), dtype=torch.float)
+        self.delta_max=delta_max
+        self.squash=squash
+        log_std = torch.tensor(log_std_init, dtype=torch.float)
         self.log_std = torch.nn.Parameter(log_std)
 
     def forward(self, obs):
         mu = self.model(obs).squeeze(-1)
+        if self.squash:
+            mu = torch.tanh(mu)*self.delta_max
         sigma = torch.exp(self.log_std)
         normal = torch.distributions.Normal(mu, sigma)
         return normal 
@@ -28,7 +32,7 @@ class PolicyRL(torch.nn.Module):
 
 if __name__ == "__main__":
     print("Starting the script..")
-    obs = torch.randn(8, 4)
+    obs = torch.randn(8, 6)
     policy = PolicyRL()
     distrib = policy(obs)
     action = distrib.sample()
