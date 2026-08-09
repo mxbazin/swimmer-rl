@@ -40,7 +40,7 @@ def compute_gae(rewards, values, last_value, gamma, lambd):
         A[t] = delta[t] + gamma*lambd*(A[t+1] if t+1 < n else 0)
     return A 
 
-def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates):
+def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates, K, eps):
 
     print(r"""
         .----------------.  .----------------.  .----------------. 
@@ -78,6 +78,7 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
         batch_weights=[]
         batch_rtg=[]
         batch_obs=[]
+        batch_actions=[]
 
         # ─── Collect the batch ───────────────────────
         for episode in range (packet):
@@ -88,7 +89,9 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
             episode_reward = []
             episode_obs=[]
             episode_values = []
+            episode_actions = []
 
+            # ─── Hot loop ───────────────────────
             while not (terminated or truncated):
                 obs_t = torch.as_tensor(obs, dtype=torch.float)
                 episode_obs.append(obs_t)
@@ -97,11 +100,15 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
                 value_critic = critic(obs_t).item()
                 episode_values.append(value_critic)
 
-                action = dist.sample()
+                action = dist.sample() #tensor 0D = float
                 logp = dist.log_prob(action)
                 episode_logp.append(logp)
-                action = action.item()
-                obs, reward, terminated, truncated, info = env.step(action)
+
+                episode_actions.append(action) 
+
+                action = action.item() #rewrite the tensor previously made by dist.sample() to a python float                 
+                obs, reward, terminated, truncated, info = env.step(action) #consum the action to output the new obs, reward and flags
+
                 episode_reward.append(reward)
 
             # ─── End of and episode, critic target, boostrap, advantage ───────────────────────
@@ -119,6 +126,7 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
 
             batch_logp.extend(episode_logp)
             batch_obs.extend(episode_obs)
+            batch_actions.extend(episode_actions)
 
             # ─── Statistics ───────────────────────
             length = len(episode_reward) ; retour = sum(episode_reward)
@@ -131,17 +139,32 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
                 flag_list.append(False)
 
         # ─── Update the policy ───────────────────────
-    
         batch_logp = torch.stack(batch_logp)
+        batch_logp_old = batch_logp.detach() #copying batch_logp old before the K-loop + detach
+
         batch_weights = torch.as_tensor(batch_weights, dtype=torch.float)
         batch_rtg = torch.as_tensor(batch_rtg, dtype=torch.float)
         batch_obs = torch.stack(batch_obs)  
+        batch_actions= torch.stack(batch_actions)
 
-        loss = - (batch_weights * batch_logp).mean()
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        for k in range(K):
+            dist = policy(batch_obs)
+            batch_logp_new = dist.log_prob(batch_actions)
+
+            ratio = torch.exp(batch_logp_new - batch_logp_old)
+            A = batch_weights
+            objective = torch.minimum(ratio*A, torch.clip(ratio, 1-eps, 1+eps)*A) 
+
+            if k == K-1:
+                print("torch.max(torch.abs(ratio-1))", torch.max(torch.abs(ratio-1)))
+
+            loss = - (objective).mean()
+
+            # /!\ the optimizer update the parameters given at the beginning of train
+            optimizer.zero_grad() #zero the .grad of the parameters 
+            loss.backward() #backward prop the graph to write in the .grad
+            optimizer.step() #read the grad, apply the ADam rule and modify the parameters 
 
         # ─── Update the critic ───────────────────────
         for _ in range (0,10):
@@ -167,7 +190,7 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
 if __name__ == "__main__":
 
     ## ─── Parameters ───────────────────────
-    list_seed= [104, 171] #97
+    list_seed= [104] #97, 171
     list_mode = 'gae'
     lr_loss = 1e-3
     lr_critic = 1e-2
@@ -180,15 +203,17 @@ if __name__ == "__main__":
     gamma=1
     squash=True
     normalize ='steps'
+    K = 4
+    eps = 0.2
 
     for seed in list_seed:
 
         retour_stats, policy = train(env, seed=seed, log_std_init=log_std_init, squash=squash, 
-                                        lr_loss=lr_loss, lr_critic=lr_critic, lam=lam, gamma=gamma, packet=packet, n_updates=n_updates)
+                                        lr_loss=lr_loss, lr_critic=lr_critic, lam=lam, gamma=gamma, packet=packet, n_updates=n_updates, K = K, eps = eps)
 
-        np.save(f'runs/returns_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}.npy', retour_stats)
-        torch.save(policy.state_dict(), f'runs/policy_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}.pt')
-        #plot_returns(retour_stats, 20, f"mean_vswim{env.v_swim}_periodic_baseline{baseline}_{mode}_normalize{normalize}_lr{lr}_seed{seed}_packet{packet}")
+        np.save(f'runs/returns_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_K_{K}_epsilon_{eps}.npy', retour_stats)
+        torch.save(policy.state_dict(), f'runs/policy_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}.pt')
+        plot_returns(retour_stats, 20, f"mean_vswim{env.v_swim}_periodic_ppo__nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}")
 
         retour_stats_mean_stoch, success_win_stoch, length_stats_mean_stoch = evaluate(env, policy, 20, deterministic=False)
         print("STOCHASTIC:", "|", "retour", retour_stats_mean_stoch, "|", "success", success_win_stoch, "/", 20, "|", "length", length_stats_mean_stoch)
