@@ -40,7 +40,7 @@ def compute_gae(rewards, values, last_value, gamma, lambd):
         A[t] = delta[t] + gamma*lambd*(A[t+1] if t+1 < n else 0)
     return A 
 
-def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates, K, eps):
+def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates, K, eps):
 
     print(r"""
         .----------------.  .----------------.  .----------------. 
@@ -62,10 +62,10 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
     # ─── Setup: networks, optimizers, stats ───────────────────────
     torch.manual_seed(seed)
 
-    policy = PolicyRL(log_std_init, delta_max=env.delta_max, squash=squash)
+    policy = PolicyRL(obs_dim=obs_dim, log_std_init=log_std_init, delta_max=env.delta_max, squash=squash)
     optimizer = torch.optim.Adam(policy.parameters(),lr=lr_loss)
 
-    critic = Critic()
+    critic = Critic(obs_dim_critic=obs_dim)
     optimizer_critic = torch.optim.Adam(critic.parameters(),lr=lr_critic)
 
     length_stats = []
@@ -147,7 +147,6 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
         batch_obs = torch.stack(batch_obs)  
         batch_actions= torch.stack(batch_actions)
 
-
         for k in range(K):
             dist = policy(batch_obs)
             batch_logp_new = dist.log_prob(batch_actions)
@@ -190,12 +189,13 @@ def train(env, seed, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packe
 if __name__ == "__main__":
 
     ## ─── Parameters ───────────────────────
-    list_seed= [104] #97, 171
+    obs_dim = 3
+    list_seed= [171] #[104] #97, 
     list_mode = 'gae'
     lr_loss = 1e-3
     lr_critic = 1e-2
     packet=8
-    n_updates=300
+    n_updates=5
     shaping = True
     env = SwimmerEnv(0.5, 0.1, shaping=shaping)
     log_std_init = -1
@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
     for seed in list_seed:
 
-        retour_stats, policy = train(env, seed=seed, log_std_init=log_std_init, squash=squash, 
+        retour_stats, policy = train(env, seed=seed, obs_dim=obs_dim, log_std_init=log_std_init, squash=squash, 
                                         lr_loss=lr_loss, lr_critic=lr_critic, lam=lam, gamma=gamma, packet=packet, n_updates=n_updates, K = K, eps = eps)
 
         np.save(f'runs/returns_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_K_{K}_epsilon_{eps}.npy', retour_stats)
