@@ -47,9 +47,9 @@ class SwimmerEnv:
         obs = np.array([d[0], d[1], np.cos(self.theta), np.sin(self.theta), u, v])
         return obs
 
-    def reset(self, px=2, py=1):
-        self.px = px
-        self.py = py
+    def reset(self, px=None, py=None):
+        self.px = 2
+        self.py = 1
         d = self._displacement_to_target()
 
         self.distance_target = np.sqrt(d[0]**2 + d[1]**2)

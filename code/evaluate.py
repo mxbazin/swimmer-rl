@@ -7,7 +7,7 @@ from policy import PolicyRL
 import numpy as np
 import torch
 
-def evaluate(env, policy, n_episodes=20, deterministic=True):
+def evaluate(env, policy, n_episodes=20, deterministic=True, obs_mean=None, obs_std=None):
     length_stats = []
     retour_stats =[]
     flag_deterministic_list=[]
@@ -18,7 +18,13 @@ def evaluate(env, policy, n_episodes=20, deterministic=True):
             obs= env.reset()
             list_reward = []
             while not (terminated or truncated):
-                action = policy.act(obs, deterministic)                
+
+                obs_t = torch.as_tensor(obs, dtype=torch.float)
+
+                if obs_mean is not None and obs_std is not None:
+                     obs_t = (obs_t - obs_mean)/(obs_std + 1e-8)
+                     
+                action = policy.act(obs_t, deterministic)                
                 obs, reward, terminated, truncated, info = env.step(action)
                 list_reward.append(reward)
                 #print("action:", action)

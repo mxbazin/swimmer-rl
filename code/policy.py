@@ -1,13 +1,17 @@
 # le nn.Module gaussien (session 1)
 import torch
+import orth_norm
+import numpy as np
 
 class PolicyRL(torch.nn.Module):
     def __init__(self,  obs_dim, log_std_init, delta_max=1, squash=True):
         super().__init__()
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(obs_dim, 64),
+            orth_norm.ortho_weights(torch.nn.Linear(obs_dim, 64), np.sqrt(2)),
             torch.nn.Tanh(),
-            torch.nn.Linear(64,1))
+            orth_norm.ortho_weights(torch.nn.Linear(64, 64), np.sqrt(2)),
+            torch.nn.Tanh(),
+            orth_norm.ortho_weights(torch.nn.Linear(64, 1), 0.01))
         self.delta_max=delta_max
         self.squash=squash
         log_std = torch.tensor(log_std_init, dtype=torch.float)

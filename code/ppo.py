@@ -40,7 +40,8 @@ def compute_gae(rewards, values, last_value, gamma, lambd):
         A[t] = delta[t] + gamma*lambd*(A[t+1] if t+1 < n else 0)
     return A 
 
-def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates, K, eps):
+def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gamma, packet, n_updates, 
+          K, eps, max_grad_norm, entropy_coef, minibatch_size, N_warmup):
 
     print(r"""
         .----------------.  .----------------.  .----------------. 
@@ -63,14 +64,25 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
     torch.manual_seed(seed)
 
     policy = PolicyRL(obs_dim=obs_dim, log_std_init=log_std_init, delta_max=env.delta_max, squash=squash)
-    optimizer = torch.optim.Adam(policy.parameters(),lr=lr_loss)
+    optimizer = torch.optim.Adam(policy.parameters(),lr=lr_loss, eps=1e-5)
 
     critic = Critic(obs_dim_critic=obs_dim)
-    optimizer_critic = torch.optim.Adam(critic.parameters(),lr=lr_critic)
+    optimizer_critic = torch.optim.Adam(critic.parameters(),lr=lr_critic, eps=1e-5)
 
     length_stats = []
     retour_stats =[]
     flag_list=[]
+
+    #observation normalization
+    obs_t_mean = torch.zeros(obs_dim)
+    obs_t_count = 0
+    obs_M2 = torch.zeros(obs_dim)
+
+    #mean of the accumulator
+    accumulator_mean=0
+    accumulator_M2 = 0
+    accumulator_count=0
+
 
     # ─── Main loop: 1 iteration = 1 update ───────────────────────
     for update in range(n_updates):
@@ -79,6 +91,16 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
         batch_rtg=[]
         batch_obs=[]
         batch_actions=[]
+
+        # learning rate decay (/ppo-implementation-details) 
+        #lr_loss decay
+        frac = 1.0 - update/n_updates
+        lr_now = lr_loss*frac
+        optimizer.param_groups[0]['lr'] = lr_now 
+
+        #lr_critic decay
+        lr_critic_now = lr_critic*frac
+        optimizer_critic.param_groups[0]['lr'] = lr_critic_now 
 
         # ─── Collect the batch ───────────────────────
         for episode in range (packet):
@@ -91,9 +113,21 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
             episode_values = []
             episode_actions = []
 
+            episode_reward_accumulor=[]
+            R =0   #mean of the accumulator
+
             # ─── Hot loop ───────────────────────
             while not (terminated or truncated):
                 obs_t = torch.as_tensor(obs, dtype=torch.float)
+
+                #obs normalization by using Weldford algo
+                obs_t_count +=1 
+                obs_t_old_mean = obs_t_mean.clone()
+                obs_t_mean += (obs_t - obs_t_mean)/obs_t_count
+                obs_M2 += (obs_t - obs_t_old_mean)*(obs_t - obs_t_mean)
+                obs_t_std = torch.sqrt(obs_M2 / obs_t_count)
+                obs_t = (obs_t - obs_t_mean) / (obs_t_std + 1e-8)
+
                 episode_obs.append(obs_t)
 
                 dist = policy(obs_t)
@@ -109,19 +143,37 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
                 action = action.item() #rewrite the tensor previously made by dist.sample() to a python float                 
                 obs, reward, terminated, truncated, info = env.step(action) #consum the action to output the new obs, reward and flags
 
-                episode_reward.append(reward)
+                #accumulator normalization by using Weldford algo
+                R = gamma*R + reward 
+                accumulator_count +=1 
+                accumulator_old_mean = accumulator_mean
+                accumulator_mean += (R - accumulator_mean)/accumulator_count
+                accumulator_M2 += (R - accumulator_old_mean)*(R - accumulator_mean)
 
-            # ─── End of and episode, critic target, boostrap, advantage ───────────────────────
-            return_rtg = function_reward_to_go_return(episode_reward, gamma=gamma)
-            batch_rtg.extend(return_rtg)
+                if accumulator_count < N_warmup:
+                    accumulator_std = 1
+                else: 
+                    accumulator_std = np.sqrt(accumulator_M2 / accumulator_count)
+
+                episode_reward_accumulor.append(reward / (accumulator_std + 1e-8))
+
+                episode_reward.append(reward)
 
             if terminated == True:
                 last_value = 0.0
                 
             elif truncated == True:
-                last_value = critic(torch.as_tensor(obs, dtype=torch.float)).item()
+                #obs normalization
+                obs_critic = torch.as_tensor(obs, dtype=torch.float)
+                obs_critic = (obs_critic - obs_t_mean) / (obs_t_std + 1e-8)
+                last_value = critic(torch.as_tensor(obs_critic, dtype=torch.float)).item()
 
-            advantage = compute_gae(episode_reward, episode_values, last_value, gamma, lam)
+            advantage = compute_gae(episode_reward_accumulor, episode_values, last_value, gamma, lam)
+
+            # ─── End of and episode, critic target, boostrap, advantage ───────────────────────
+            return_rtg = advantage + episode_values
+            batch_rtg.extend(return_rtg)
+
             batch_weights.extend(advantage)
 
             batch_logp.extend(episode_logp)
@@ -145,25 +197,51 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
         batch_weights = torch.as_tensor(batch_weights, dtype=torch.float)
         batch_rtg = torch.as_tensor(batch_rtg, dtype=torch.float)
         batch_obs = torch.stack(batch_obs)  
-        batch_actions= torch.stack(batch_actions)
+        batch_actions= torch.stack(batch_actions)     
+        N = len(batch_obs)   
 
         for k in range(K):
-            dist = policy(batch_obs)
-            batch_logp_new = dist.log_prob(batch_actions)
 
-            ratio = torch.exp(batch_logp_new - batch_logp_old)
-            A = batch_weights
-            objective = torch.minimum(ratio*A, torch.clip(ratio, 1-eps, 1+eps)*A) 
+            N_permut = torch.randperm(N)
 
-            if k == K-1:
-                print("torch.max(torch.abs(ratio-1))", torch.max(torch.abs(ratio-1)))
+            for start in range (0, N, minibatch_size):
 
-            loss = - (objective).mean()
+                idx = N_permut[start:start + minibatch_size]
 
-            # /!\ the optimizer update the parameters given at the beginning of train
-            optimizer.zero_grad() #zero the .grad of the parameters 
-            loss.backward() #backward prop the graph to write in the .grad
-            optimizer.step() #read the grad, apply the ADam rule and modify the parameters 
+                if len(idx) < 2: 
+                    continue 
+
+                batch_logp_old_mb = batch_logp_old[idx]
+                batch_weights_mb = batch_weights[idx]
+                batch_obs_mb = batch_obs[idx]
+                batch_actions_mb = batch_actions[idx] 
+
+                dist = policy(batch_obs_mb)
+                batch_logp_new = dist.log_prob(batch_actions_mb)
+
+                ratio = torch.exp(batch_logp_new - batch_logp_old_mb)
+
+                A = (batch_weights_mb - batch_weights_mb.mean()) / (batch_weights_mb.std() + 1e-8) # normalization of advantages (/ppo-implementation-details) 
+
+                objective = torch.minimum(ratio*A, torch.clip(ratio, 1-eps, 1+eps)*A) 
+
+
+                if k == K-1 and start==0:
+                    print("torch.max(torch.abs(ratio-1))", torch.max(torch.abs(ratio-1)))
+
+                policy_loss = - (objective).mean()
+                loss = policy_loss - dist.entropy().mean()*entropy_coef
+
+                # /!\ the optimizer update the parameters given at the beginning of train
+                optimizer.zero_grad() #zero the .grad of the parameters 
+                loss.backward() #backward prop the graph to write in the .grad
+
+                grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=max_grad_norm) # global gradient clipping (/ppo-implementation-details)
+                
+                if k == K-1 and start==0:
+                    print("grad norm | ", grad_norm)
+
+                optimizer.step() #read the grad, apply the ADam rule and modify the parameters 
 
         # ─── Update the critic ───────────────────────
         for _ in range (0,10):
@@ -180,7 +258,7 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
             sigma = torch.exp(policy.log_std).item()
             print("batch:", update, "|", "mean length", stats.mean(length_stats[-packet:]), "|", "retour", mean_retour_stats, "|", "success", success_win, "/", packet, "|", "sigma", sigma, "|")
 
-    return retour_stats, policy 
+    return retour_stats, policy, obs_t_mean, obs_t_std
 
 ## -------------------------------------------------------------------------------
 ## ------------------------------Code---------------------------------------------
@@ -189,37 +267,72 @@ def train(env, seed, obs_dim, log_std_init, squash, lr_loss, lr_critic, lam, gam
 if __name__ == "__main__":
 
     ## ─── Parameters ───────────────────────
-    obs_dim = 3
-    list_seed= [171] #[104] #97, 
+    obs_dim = 6
+    list_seed= [97, 104, 171]
+
     list_mode = 'gae'
     lr_loss = 1e-3
     lr_critic = 1e-2
+
     packet=8
-    n_updates=5
+    n_updates=300
+
     shaping = True
-    env = SwimmerEnv(0.5, 0.1, shaping=shaping)
     log_std_init = -1
+
     lam = 0.95
     gamma=1
+
     squash=True
     normalize ='steps'
-    K = 4
+
+    K = 10
     eps = 0.2
+    max_grad_norm = 0.5
+    entropy_coef = 0.01
+    minibatch_size = 64
+
+    N_warmup=1000
+
+    delta_max=2
+
+    list_synthesis=[]
 
     for seed in list_seed:
 
-        retour_stats, policy = train(env, seed=seed, obs_dim=obs_dim, log_std_init=log_std_init, squash=squash, 
-                                        lr_loss=lr_loss, lr_critic=lr_critic, lam=lam, gamma=gamma, packet=packet, n_updates=n_updates, K = K, eps = eps)
+        env = SwimmerEnv(0.5, 0.1, shaping=shaping)
 
-        np.save(f'runs/returns_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_K_{K}_epsilon_{eps}.npy', retour_stats)
-        torch.save(policy.state_dict(), f'runs/policy_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}.pt')
-        plot_returns(retour_stats, 20, f"mean_vswim{env.v_swim}_periodic_ppo__nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}")
+        retour_stats, policy, obs_t_mean, obs_t_std = train(env, seed=seed, obs_dim=obs_dim, log_std_init=log_std_init, squash=squash, 
+                                        lr_loss=lr_loss, lr_critic=lr_critic, lam=lam, gamma=gamma, packet=packet, n_updates=n_updates, 
+                                        K = K, eps = eps, max_grad_norm=max_grad_norm, entropy_coef=entropy_coef, minibatch_size=minibatch_size, N_warmup=N_warmup)
 
-        retour_stats_mean_stoch, success_win_stoch, length_stats_mean_stoch = evaluate(env, policy, 20, deterministic=False)
+        np.save(f'runs/SWIMMER_returns_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_K_{K}_epsilon_{eps}_max_grad_norm{max_grad_norm}_entropy_coef{entropy_coef}_minibatch_size{minibatch_size}_delta_max{delta_max}.npy', retour_stats)
+        torch.save(policy.state_dict(), f'runs/SWIMMER_policy_mean_periodic_nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}_max_grad_norm{max_grad_norm}_entropy_coef{entropy_coef}_minibatch_size{minibatch_size}_delta_max{delta_max}.pt')
+        plot_returns(retour_stats, 20, f"mean_SWIMMER_{env.v_swim}_periodic_ppo__nupdates{n_updates}_log_std_init{log_std_init}_lrcritic{lr_critic}_shaping{shaping}_squash{squash}_lam{lam}_gamma{gamma}_normalize{normalize}_lrloss{lr_loss}_seed{seed}_packet{packet}_epsilon_{eps}_max_grad_norm{max_grad_norm}_entropy_coef{entropy_coef}_minibatch_size{minibatch_size}_delta_max{delta_max}")
+
+        retour_stats_mean_stoch, success_win_stoch, length_stats_mean_stoch = evaluate(env, policy, 20, deterministic=False, obs_mean=obs_t_mean, obs_std=obs_t_std)
         print("STOCHASTIC:", "|", "retour", retour_stats_mean_stoch, "|", "success", success_win_stoch, "/", 20, "|", "length", length_stats_mean_stoch)
 
-        retour_stats_mean_deterministic, success_win_deterministic, length_stats_mean_deterministic = evaluate(env, policy, 1, deterministic=True)
+        retour_stats_mean_deterministic, success_win_deterministic, length_stats_mean_deterministic = evaluate(env, policy, 1, deterministic=True, obs_mean=obs_t_mean, obs_std=obs_t_std)
         print("DETERMINISTIC:", "|", "retour", retour_stats_mean_deterministic, "|", "success", success_win_deterministic, "/", 1, "|", "length", length_stats_mean_deterministic)
+
+        list_synthesis.append( (seed, retour_stats_mean_deterministic, length_stats_mean_deterministic, retour_stats_mean_stoch, length_stats_mean_stoch))
 
     retour_stats_mean_greedy, success_win_greedy, length_stats_mean_greedy = evaluate(env, GreedyPolicy(), 1, deterministic=True)
     print("GREEDY:", "|", "retour", retour_stats_mean_greedy, "|", "success", success_win_greedy, "/", 20, "|", "length", length_stats_mean_greedy)
+
+    # Synthesis of the runs
+    retour_synthesis_stoch =[]
+    retour_synthesis_deterministic =[]
+
+    for element in list_synthesis:
+        retour_synthesis_stoch.append(element[3])
+        retour_synthesis_deterministic.append(element[1])
+
+    print("median of the return (stoch): ", stats.median(retour_synthesis_stoch), 
+            "std of the return (stoch): ", stats.stdev(retour_synthesis_stoch))
+
+    print("median of the return (det): ", stats.median(retour_synthesis_deterministic), 
+            "std of the return (det): ", stats.stdev(retour_synthesis_deterministic))
+
+
